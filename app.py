@@ -1,97 +1,99 @@
 import streamlit as st
-import pandas as pd
+from googleapiclient.discovery import build
+import google.generativeai as genai
+import re
+from datetime import datetime
 
 # -----------------------------------------------
-# 0. 페이지 설정 및 구글 테마 CSS
+# API 설정 (Secrets 관리 권장)
 # -----------------------------------------------
-st.set_page_config(page_title="Content Summarizer", layout="centered")
+YOUTUBE_API_KEY = st.secrets["YOUTUBE_API_KEY"]
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
-st.markdown("""
-<style>
-    /* 구글 검색창 스타일 모방 */
-    .main {
-        background-color: white;
+# Gemini AI 설정
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-pro')
+
+# -----------------------------------------------
+# 함수: 유튜브 데이터 추출
+# -----------------------------------------------
+def get_youtube_data(url):
+    # URL에서 Video ID 추출 로직
+    video_id_match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11}).*", url)
+    if not video_id_match:
+        return None
+    video_id = video_id_match.group(1)
+
+    youtube = build('youtube', 'v3', developerKey=YOUTUBE_API_KEY)
+    
+    # 영상 정보 가져오기
+    video_response = youtube.videos().list(
+        part='snippet,statistics',
+        id=video_id
+    ).execute()
+
+    if not video_response['items']:
+        return None
+
+    item = video_response['items'][0]
+    snippet = item['snippet']
+    stats = item['statistics']
+
+    # 채널 정보 가져오기 (구독자 수)
+    channel_response = youtube.channels().list(
+        part='statistics',
+        id=snippet['channelId']
+    ).execute()
+    
+    sub_count = channel_response['items'][0]['statistics'].get('subscriberCount', '0')
+
+    return {
+        "title": snippet['title'],
+        "channel_name": snippet['channelTitle'],
+        "subscribers": sub_count,
+        "views": stats.get('viewCount', '0'),
+        "published_at": snippet['publishedAt'].split('T')[0],
+        "description": snippet['description'] # 요약을 위한 원문 데이터
     }
-    div.stTextInput > div > div > input {
-        border-radius: 24px;
-        padding: 12px 20px;
-        border: 1px solid #dfe1e5;
-        box-shadow: none;
-        transition: box-shadow 0.2s;
-    }
-    div.stTextInput > div > div > input:hover, div.stTextInput > div > div > input:focus {
-        box-shadow: 0 1px 6px rgba(32,33,36,.28);
-        border-color: rgba(223,225,229,0);
-    }
-    /* 생성 버튼 스타일 */
-    div.stButton > button {
-        background-color: #f8f9fa;
-        color: #3c4043;
-        border: 1px solid #f8f9fa;
-        border-radius: 4px;
-        padding: 8px 16px;
-        font-size: 14px;
-        margin-top: 20px;
-    }
-    div.stButton > button:hover {
-        border: 1px solid #dadce0;
-        color: #202124;
-        background-color: #f8f9fa;
-    }
-</style>
-""", unsafe_allow_html=True)
 
 # -----------------------------------------------
-# 1. 메인 UI 디자인
+# 함수: Gemini AI 요약
 # -----------------------------------------------
-st.markdown("<br><br><br>", unsafe_allow_html=True)
-# 구글 로고 느낌의 타이틀 (텍스트)
-st.markdown("<h1 style='text-align: center; color: #4285F4; font-size: 60px;'>Summarizer</h1>", unsafe_allow_html=True)
-st.markdown("<br>", unsafe_allow_html=True)
-
-# 검색창 영역
-url_input = st.text_input("", placeholder="분석할 인스타그램 또는 유튜브 링크를 입력하세요", label_visibility="collapsed")
-
-col1, col2, col3 = st.columns([1.5, 1, 1.5])
-with col2:
-    generate_btn = st.button("생성", use_container_width=True)
+def summarize_content(text):
+    try:
+        prompt = f"다음 내용을 핵심 위주로 3줄 내외로 요약해줘:\n\n{text}"
+        response = model.generate_content(prompt)
+        return response.text
+    except Exception as e:
+        return f"요약 실패: {str(e)}"
 
 # -----------------------------------------------
-# 2. 핵심 로직 (시뮬레이션)
+# 메인 로직 내 실행 부분 (버튼 클릭 시)
 # -----------------------------------------------
+# ... (기존 UI 코드 유지) ...
+
 if generate_btn:
     if not url_input:
         st.warning("URL을 입력해 주세요.")
     else:
-        with st.spinner('콘텐츠를 분석하고 요약하는 중입니다...'):
-            # 여기에 실제 분석 함수들이 들어갈 자리입니다.
+        with st.spinner('Gemini AI가 분석 중입니다...'):
             if "youtube.com" in url_input or "youtu.be" in url_input:
-                platform = "YouTube"
-                # 예시 데이터
-                data_to_save = {
-                    "유튜브 제목": "테스트 영상",
-                    "채널명": "테스트 채널",
-                    "구독자수": "10만",
-                    "조회수": "5,000",
-                    "업로드 일자": "2024-05-20",
-                    "내용요약": "이 영상은... (AI 요약본)"
-                }
-                st.success(f"{platform} 데이터가 수집되었습니다.")
-                st.json(data_to_save)
-                # TODO: Google Sheet 저장 로직 호출
+                yt_data = get_youtube_data(url_input)
                 
-            elif "instagram.com" in url_input:
-                platform = "Instagram"
-                data_to_save = {
-                    "인스타 계정": "@user_test",
-                    "팔로워수": "50k",
-                    "조회수": "12,000",
-                    "업로드 일자": "2024-05-19",
-                    "내용 요약": "이 포스트는... (AI 요약본)"
-                }
-                st.success(f"{platform} 데이터가 수집되었습니다.")
-                st.json(data_to_save)
-                # TODO: Google Sheet 저장 로직 호출
-                
-            else:
-                st.error("지원하지 않는 URL 형식입니다.")
+                if yt_data:
+                    # Gemini 요약 실행
+                    summary = summarize_content(f"제목: {yt_data['title']}\n설명: {yt_data['description']}")
+                    
+                    # 최종 저장용 데이터 구조
+                    result = {
+                        "유튜브 제목": yt_data['title'],
+                        "채널명": yt_data['channel_name'],
+                        "구독자수": yt_data['subscribers'],
+                        "조회수": yt_data['views'],
+                        "업로드 일자": yt_data['published_at'],
+                        "내용요약": summary
+                    }
+                    st.success("유튜브 데이터 분석 완료!")
+                    st.table([result]) # 결과 확인용 테이블
+                else:
+                    st.error("유튜브 정보를 가져올 수 없습니다.")
